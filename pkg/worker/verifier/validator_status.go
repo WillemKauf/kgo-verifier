@@ -39,6 +39,10 @@ type ValidatorStatus struct {
 	// The highest valid offset consumed throughout the consumer's lifetime
 	MaxOffsetsConsumed map[int32]int64 `json:"max_offsets_consumed"`
 
+	// The last consumed value for a given key in a partition. Only valid for sequential and group consumers
+	// (random consumers may not read the latest offset for a given key)
+	LatestValueConsumed map[int32]map[string]string `json:"latest_value_consumed"`
+
 	LostOffsets map[int32]int64 `json:"lost_offsets"`
 
 	// The number of tombstones consumed
@@ -54,8 +58,9 @@ type ValidatorStatus struct {
 	// Last consumed offset per partition. Used to assert monotonicity and check for gaps.
 	lastOffsetConsumed map[int32]int64
 
-	// The latest offset seen for a given key. Used to help track the latest key-value pair that should be seen.
-	lastOffsetPerKeyConsumed map[string]int64
+	// The latest offset seen for a given key in a partition.
+	// Used to help track the latest key-value pair that should be seen.
+	lastOffsetPerKeyConsumed map[int32]map[string]int64
 
 	// Last leader epoch per partition. Used to assert monotonicity.
 	lastLeaderEpoch map[int32]int32
@@ -130,6 +135,18 @@ func (cs *ValidatorStatus) recordOffset(r *kgo.Record, recordExpected bool) {
 	if cs.lastLeaderEpoch == nil {
 		cs.lastLeaderEpoch = make(map[int32]int32)
 	}
+	if cs.lastOffsetPerKeyConsumed == nil {
+		cs.lastOffsetPerKeyConsumed = make(map[int32]map[string]int64)
+	}
+	if cs.lastOffsetPerKeyConsumed[r.Partition] == nil {
+		cs.lastOffsetPerKeyConsumed[r.Partition] = make(map[string]int64)
+	}
+	if cs.LatestValueConsumed == nil {
+		cs.LatestValueConsumed = make(map[int32]map[string]string)
+	}
+	if cs.LatestValueConsumed[r.Partition] == nil {
+		cs.LatestValueConsumed[r.Partition] = make(map[string]string)
+	}
 
 	// We bump highest offset only for valid records.
 	if r.Offset > cs.MaxOffsetsConsumed[r.Partition] && recordExpected {
@@ -138,6 +155,9 @@ func (cs *ValidatorStatus) recordOffset(r *kgo.Record, recordExpected bool) {
 
 	cs.lastOffsetConsumed[r.Partition] = r.Offset
 	cs.lastLeaderEpoch[r.Partition] = r.LeaderEpoch
+	if r.Offset > cs.lastOffsetPerKeyConsumed[r.Partition][string(r.Key)] {
+		cs.LatestValueConsumed[r.Partition][string(r.Key)] = string(r.Value)
+	}
 }
 
 func (cs *ValidatorStatus) RecordLostOffsets(p int32, count int64) {
@@ -171,11 +191,13 @@ func (cs *ValidatorStatus) SetMonotonicityTestStateForPartition(partition int32,
 }
 
 func (cs *ValidatorStatus) Checkpoint() {
+	_, err := json.Marshal(cs)
+	util.Chk(err, "Status serialization error")
+
 	log.Infof("Validator status: %s", cs.String())
 }
 
 func (cs *ValidatorStatus) String() string {
-	data, err := json.Marshal(cs)
-	util.Chk(err, "Status serialization error")
-	return string(data)
+	return fmt.Sprintf("Name: %s, ValidReads: %d, InvalidReads: %d, OutOfScopeInvalidReads: %d, TombstonesConsumed: %d",
+		cs.Name, cs.ValidReads, cs.InvalidReads, cs.OutOfScopeInvalidReads, cs.TombstonesConsumed)
 }
