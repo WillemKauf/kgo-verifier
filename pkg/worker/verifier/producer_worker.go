@@ -151,6 +151,9 @@ type ProducerWorkerStatus struct {
 
 	MaxOffsetsProduced map[int32]int64 `json:"max_offsets_produced"`
 
+	// The last produced value for a given key in a partition.
+	LatestValueProduced map[int32]map[string]string `json:"latest_value_produced"`
+
 	// How many times did we restart the producer loop?
 	Restarts int64 `json:"restarts"`
 
@@ -184,18 +187,22 @@ type ProducerWorkerStatus struct {
 
 func NewProducerWorkerStatus(topic string) ProducerWorkerStatus {
 	return ProducerWorkerStatus{
-		Topic:              topic,
-		MaxOffsetsProduced: make(map[int32]int64),
-		lastCheckpoint:     time.Now(),
-		latency:            metrics.NewHistogram(metrics.NewExpDecaySample(1024, 0.015)),
+		Topic:               topic,
+		MaxOffsetsProduced:  make(map[int32]int64),
+		LatestValueProduced: make(map[int32]map[string]string),
+		lastCheckpoint:      time.Now(),
+		latency:             metrics.NewHistogram(metrics.NewExpDecaySample(1024, 0.015)),
 	}
 }
 
-func (self *ProducerWorkerStatus) OnAcked(Partition int32, Offset int64) {
+func (self *ProducerWorkerStatus) OnAcked(r *kgo.Record) {
 	self.lock.Lock()
 	defer self.lock.Unlock()
-	self.Acked += 1
 
+	Partition := r.Partition
+	Offset := r.Offset
+
+	self.Acked += 1
 	currentMax, present := self.MaxOffsetsProduced[Partition]
 	if present {
 		if currentMax < Offset {
@@ -209,6 +216,11 @@ func (self *ProducerWorkerStatus) OnAcked(Partition int32, Offset int64) {
 	} else {
 		self.MaxOffsetsProduced[Partition] = Offset
 	}
+
+	if self.LatestValueProduced[Partition] == nil {
+		self.LatestValueProduced[Partition] = make(map[string]string)
+	}
+	self.LatestValueProduced[Partition][string(r.Key)] = string(r.Value)
 }
 
 func (self *ProducerWorkerStatus) OnBadOffset() {
@@ -223,6 +235,11 @@ func (self *ProducerWorkerStatus) OnFail() {
 	self.Fails += 1
 }
 
+func (pw *ProducerWorkerStatus) String() string {
+	return fmt.Sprintf("Topic: %s, Sent: %d, Acked: %d, BadOffsets: %d, Restarts: %d, Fails: %d, TombstonesProduced: %d, FailedTransactions: %d, AbortedTransactionMessages: %d",
+		pw.Topic, pw.Sent, pw.Acked, pw.BadOffsets, pw.Restarts, pw.Fails, pw.TombstonesProduced, pw.FailedTransactions, pw.AbortedTransactionMessages)
+}
+
 func (pw *ProducerWorker) produceCheckpoint() {
 	err := pw.validOffsets.Store()
 	util.Chk(err, "Error writing offset map: %v", err)
@@ -230,11 +247,11 @@ func (pw *ProducerWorker) produceCheckpoint() {
 	status, lock := pw.GetStatus()
 
 	lock.Lock()
-	data, err := json.Marshal(status)
+	_, err = json.Marshal(status)
 	lock.Unlock()
 
 	util.Chk(err, "Status serialization error")
-	log.Infof("Producer status: %s", data)
+	log.Infof("Producer status: %s", status.(*ProducerWorkerStatus).String())
 }
 
 func (pw *ProducerWorker) Wait() error {
@@ -381,10 +398,11 @@ func (pw *ProducerWorker) produceInner(n int64) (int64, []BadOffset, error) {
 				log.Debugf("errored = %t", errored)
 			} else {
 				ackLatency := time.Now().Sub(sentAt)
-				pw.Status.OnAcked(r.Partition, r.Offset)
+				pw.Status.OnAcked(r)
 				pw.Status.latency.Update(ackLatency.Microseconds())
 				log.Debugf("Wrote partition %d at %d", r.Partition, r.Offset)
 				pw.validOffsets.Insert(r.Partition, r.Offset)
+
 			}
 			wg.Done()
 		}
