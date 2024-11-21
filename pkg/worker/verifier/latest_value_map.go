@@ -12,19 +12,19 @@ import (
 
 type LatestValueMap struct {
 	topic               string
-	latestKvByPartition []map[string]string
+	LatestKvByPartition []map[string]string
 }
 
 func (lvm *LatestValueMap) Get(partition int32, key string) (value string, exists bool) {
-	if partition < 0 || partition >= int32(len(lvm.latestKvByPartition)) {
-		log.Panicf("Partition %d out of bounds for latestValueMap of size %d", partition, len(lvm.latestKvByPartition))
+	if partition < 0 || partition >= int32(len(lvm.LatestKvByPartition)) {
+		log.Panicf("Partition %d out of bounds for latestValueMap of size %d", partition, len(lvm.LatestKvByPartition))
 	}
-	value, exists = lvm.latestKvByPartition[partition][key]
+	value, exists = lvm.LatestKvByPartition[partition][key]
 	return
 }
 
 func (lvm *LatestValueMap) Insert(partition int32, key string, value string) {
-	lvm.latestKvByPartition[partition][key] = value
+	lvm.LatestKvByPartition[partition][key] = value
 }
 
 func latestValueMapFile(topic string) string {
@@ -69,12 +69,12 @@ func LoadLatestValues(topic string, nPartitions int32) LatestValueMap {
 		util.Chk(err, "Bad JSON %v", err)
 	}
 
-	if int32(len(lvm.latestKvByPartition)) > nPartitions {
+	if int32(len(lvm.LatestKvByPartition)) > nPartitions {
 		util.Die("More partitions in latest_value_map file than in topic!")
-	} else if len(lvm.latestKvByPartition) < int(nPartitions) {
+	} else if len(lvm.LatestKvByPartition) < int(nPartitions) {
 		// Creating new partitions is allowed
-		blanks := make([]map[string]string, nPartitions-int32(len(lvm.latestKvByPartition)))
-		lvm.latestKvByPartition = append(lvm.latestKvByPartition, blanks...)
+		blanks := make([]map[string]string, nPartitions-int32(len(lvm.LatestKvByPartition)))
+		lvm.LatestKvByPartition = append(lvm.LatestKvByPartition, blanks...)
 	}
 	log.Infof("Successfully read latest value map")
 	return lvm
@@ -87,6 +87,6 @@ func NewLatestValueMap(topic string, nPartitions int32) LatestValueMap {
 	}
 	return LatestValueMap{
 		topic:               topic,
-		latestKvByPartition: maps,
+		LatestKvByPartition: maps,
 	}
 }

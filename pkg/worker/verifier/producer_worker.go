@@ -399,6 +399,9 @@ func (pw *ProducerWorker) produceInner(n int64) (int64, []BadOffset, error) {
 				pw.Status.latency.Update(ackLatency.Microseconds())
 				log.Debugf("Wrote partition %d at %d", r.Partition, r.Offset)
 				pw.validOffsets.Insert(r.Partition, r.Offset)
+				if r.Value != nil {
+					pw.validOffsets.SetLastConsumableOffset(r.Partition, r.Offset)
+				}
 				if pw.validateLatestValues {
 					pw.latestValueProduced.Insert(r.Partition, string(r.Key), string(r.Value))
 				}

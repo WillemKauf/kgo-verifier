@@ -107,6 +107,13 @@ func (srw *SeqReadWorker) sequentialReadInner(ctx context.Context, startAt []int
 		latestValuesProduced = LoadLatestValues(srw.config.workerCfg.Topic, srw.config.nPartitions)
 	}
 
+	for i, o := range upTo {
+		if validRanges.LastConsumableOffsets[i] < o {
+			upTo[i] = validRanges.LastConsumableOffsets[i]
+		}
+		log.Debugf("Adjusted offset of upTo from %d to %d", o, upTo[i])
+	}
+
 	opts := srw.config.workerCfg.MakeKgoOpts()
 	opts = append(opts, []kgo.Opt{
 		kgo.ConsumePartitions(offsets),
